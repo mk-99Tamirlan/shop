@@ -1,4 +1,4 @@
-name: shop
+﻿name: shop
 x-app: &app
   build: ./app
   depends_on:
@@ -15,7 +15,7 @@ services:
       POSTGRES_PASSWORD: shop
       POSTGRES_DB: shop
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:15432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d:ro
@@ -61,3 +61,4 @@ services:
       - ./k6:/scripts:ro
 volumes:
   pgdata:
+
