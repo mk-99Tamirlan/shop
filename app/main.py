@@ -1,12 +1,12 @@
 """
 Мини-магазин: FastAPI + PostgreSQL.
 """
-import asyncio
 import os
 import socket
 from contextlib import asynccontextmanager
 
 import asyncpg
+import mq
 from redis.asyncio.cluster import RedisCluster
 from cache import Cache
 from fastapi import FastAPI, HTTPException, Query, Request, Response
@@ -21,8 +21,6 @@ TTL_PRODUCT = 60
 TTL_LIST = 30
 TTL_TOP = 30
 DB_POOL_MAX = int(os.getenv("DB_POOL_MAX", "10"))
-# Имитация медленного платёжного шлюза
-PAYMENT_DELAY = float(os.getenv("PAYMENT_DELAY_SEC", "0.2"))
 INSTANCE = os.getenv("INSTANCE_NAME") or socket.gethostname()
 
 
@@ -34,7 +32,11 @@ async def lifespan(app: FastAPI):
     try:
         await app.state.redis.initialize()
         app.state.cache = Cache(app.state.redis, enabled=CACHE_ENABLED)
-        yield
+        app.state.mq_conn, app.state.mq_channel, _ = await mq.connect()
+        try:
+            yield
+        finally:
+            await app.state.mq_conn.close()
     finally:
         await app.state.redis.aclose()
         await app.state.db.close()
@@ -165,13 +167,10 @@ async def top_products(response: Response):
     return data
 
 
-@app.post("/orders", status_code=201)
+@app.post("/orders", status_code=202)        # 202 Accepted — «принято в обработку»
 async def create_order(order: OrderIn):
-    await asyncio.sleep(PAYMENT_DELAY)  # имитация платёжного шлюза
-
     async with app.state.db.acquire() as conn:
         async with conn.transaction():
-            # FOR UPDATE блокирует строку: два покупателя не купят один товар
             product = await conn.fetchrow(
                 "SELECT price, stock FROM products WHERE id = $1 FOR UPDATE",
                 order.product_id,
@@ -186,11 +185,14 @@ async def create_order(order: OrderIn):
                 order.quantity, order.product_id,
             )
             row = await conn.fetchrow(
-                """INSERT INTO orders (product_id, quantity, total, status, processed_at)
-                   VALUES ($1, $2, $3, 'processed', now())
+                """INSERT INTO orders (product_id, quantity, total, status)
+                   VALUES ($1, $2, $3, 'pending')
                    RETURNING id, product_id, quantity, total, status, created_at""",
                 order.product_id, order.quantity, product["price"] * order.quantity,
             )
+
+    # Публикуем ПОСЛЕ коммита: consumer должен найти заказ в БД
+    await mq.publish(app.state.mq_channel, {"order_id": row["id"]})
     await app.state.cache.delete(f"product:{order.product_id}")
     return dict(row)
 
