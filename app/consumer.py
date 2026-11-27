@@ -11,6 +11,7 @@ import mq
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://shop:shop@postgres:5432/shop")
 PAYMENT_DELAY = float(os.getenv("PAYMENT_DELAY_SEC", "0.2"))
 PREFETCH = int(os.getenv("CONSUMER_PREFETCH", "10"))
+STATEMENT_CACHE = int(os.getenv("DB_STATEMENT_CACHE_SIZE", "100"))
 NAME = socket.gethostname()
 _tasks = set()   # ссылки на запущенные задачи
 
@@ -37,7 +38,8 @@ async def safe_handle(db, message):
 
 
 async def main():
-    db = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=PREFETCH)
+    db = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=PREFETCH,
+                                   statement_cache_size=STATEMENT_CACHE)
     connection, channel, queue = await mq.connect()
     await channel.set_qos(prefetch_count=PREFETCH)
 
