@@ -7,7 +7,7 @@ import socket
 from contextlib import asynccontextmanager
 
 import asyncpg
-import redis.asyncio as redis
+from redis.asyncio.cluster import RedisCluster
 from cache import Cache
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 # --- Настройки из переменных окружения ---
 # По умолчанию — база на этом компьютере (для запуска без Docker)
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://shop:shop@localhost:5432/shop")
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+REDIS_URL = os.getenv("REDIS_URL", "redis://172.30.0.11:6379")
 CACHE_ENABLED = os.getenv("CACHE_ENABLED", "1") == "1"
 TTL_PRODUCT = 60
 TTL_LIST = 30
@@ -30,9 +30,10 @@ INSTANCE = os.getenv("INSTANCE_NAME") or socket.gethostname()
 async def lifespan(app: FastAPI):
     # Выполняется при старте приложения: создаём пул соединений
     app.state.db = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=DB_POOL_MAX)
-    app.state.redis = redis.from_url(REDIS_URL, decode_responses=True, socket_connect_timeout=1, socket_timeout=1, retry_on_timeout=False)
-    app.state.cache = Cache(app.state.redis, enabled=CACHE_ENABLED)
+    app.state.redis = RedisCluster.from_url(REDIS_URL, decode_responses=True, socket_connect_timeout=1, socket_timeout=1)
     try:
+        await app.state.redis.initialize()
+        app.state.cache = Cache(app.state.redis, enabled=CACHE_ENABLED)
         yield
     finally:
         await app.state.redis.aclose()
@@ -65,6 +66,20 @@ async def health():
     await app.state.db.fetchval("SELECT 1")
     await app.state.redis.ping()
     return {"status": "ok", "instance": INSTANCE}
+
+
+@app.get("/admin/cache-node/{product_id}")
+async def cache_node(product_id: int):
+    """На каком узле кластера лежит ключ товара."""
+    key = f"product:{product_id}"
+    rc = app.state.redis
+    node = rc.get_node_from_key(key)
+    return {
+        "key": key,
+        "hash_slot": rc.keyslot(key),
+        "node": f"{node.host}:{node.port}",
+        "cached": await rc.exists(key) == 1,
+    }
 
 
 # ВАЖНО: /products/search объявляем РАНЬШЕ /products/{product_id},

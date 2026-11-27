@@ -1,8 +1,8 @@
-lab,RPS,p95_ms,errors_percent,p95_search_ms,p95_order_ms,bottleneck
-1,,,,,,
-2,,,,,,
-3,,,,,,
-4,,,,,,
+﻿lab,RPS,p95_ms,errors_percent,p95_search_ms,p95_order_ms,bottleneck
+1,83.36,796.27,0,577.77,724.94,PostgreSQL
+2,79.07,1380,0,321.84,681.26,PostgreSQL
+3,262.63,182.11,0,12.31,217.93,Оплата заказа
+4,262.39,205.93,0,10.91,220.60,Оплата заказа
 5,,,,,,
 6,,,,,,
 7,,,,,,
